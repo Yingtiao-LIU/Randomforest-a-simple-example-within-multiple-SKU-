@@ -1,0 +1,97 @@
+#该项目仅适用于多个SKU的预测情境；且每个SKU为单独的csv，使用已有的sku历史数据预测csv文件尾部的未知数据
+
+
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split, GridSearchCV
+import os
+
+# 项目路径
+project_path = r'your path here' #请在这里输入你的项目的绝对路径
+# 导入不同的sku数据
+sku_filenames = ['9425.csv', '11068.csv', '12485.csv', '13112.csv', '13282.csv', 
+                 '14207.csv', '15170.csv', '15191.csv', '15200.csv', '16241.csv']
+
+
+
+# 创建结果文件夹
+result_dir = os.path.join(project_path, '预测结果')
+os.makedirs(result_dir, exist_ok=True)
+
+# 逐个处理每个SKU的数据
+for sku_filename in sku_filenames:
+    sku = sku_filename.split('.')[0]  # 提取SKU编号，例如'9425'
+    print(f'正在处理SKU: {sku}...')
+    
+    # 读取数据并填充空白单元格
+    file_path = os.path.join(project_path, sku_filename)
+    data = pd.read_csv(file_path)
+    
+    # 确保目标列存在
+    if 'target' not in data.columns:
+        print(f'错误: 在文件 {sku_filename} 中未找到目标列 "target"')
+        continue
+
+    # 填充空白单元格
+    data.fillna(0, inplace=True)
+
+    # 提取特征和目标变量，请确保你的时间列和目标列是前两行
+    X = data.iloc[:, 2:]  # 忽略时间列和目标列
+    y = data['target']     # 假设'target'是目标列
+
+    # 确保数据行数足够
+    if len(y) < 300:
+        print(f'错误: 在文件 {sku_filename} 中数据行数少于300行')
+        continue
+
+    # 仅使用前300个已知的y（可以修改为类似形式）
+    X_all = X[:300]  # 所有已知数据
+    y_all = y[:300]  # 所有已知目标值
+
+    # 交叉验证调参
+    param_grid = {
+        'n_estimators': [100, 200, 300],
+        'max_depth': [None, 10, 20],
+        'min_samples_split': [2, 5, 10],
+        'bootstrap': [True, False]
+    }
+
+    # 使用GridSearchCV进行参数调优
+    grid_search = GridSearchCV(
+        estimator=RandomForestRegressor(random_state=42),
+        param_grid=param_grid,
+        cv=5,
+        n_jobs=-1,
+        scoring='neg_mean_squared_error',  # 使用均方误差作为评分标准
+        return_train_score=True
+    )
+
+    # 执行网格搜索
+    print('正在执行网格搜索...')
+    grid_search.fit(X_all, y_all)
+
+    # 输出最佳参数
+    print(f'最佳参数: {grid_search.best_params_}')
+
+    # 使用最佳参数模型对所有已知数据进行预测
+    best_model = grid_search.best_estimator_
+    print('对所有已知数据进行预测...')
+    y_all_pred = best_model.predict(X_all)
+    print('完成该SKU所有已知数据的预测')
+
+
+
+    # 导出结果
+    X_test = X[300:]  # 用于后续的补多补少成本计算
+    y_test_pred = best_model.predict(X_test)
+
+    result_df = pd.DataFrame({
+        '时间': data.iloc[300:, 0],  # 假设时间列在第一列
+        '预测值': y_test_pred
+    })
+    result_df.to_csv(os.path.join(result_dir, f'预测结果_{sku}.csv'), index=False)
+
+    print(f'SKU: {sku} 的预测结果已导出。\n')
+
+print('所有SKU的处理已完成。')
